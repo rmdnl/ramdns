@@ -120,3 +120,96 @@ func TestGetSettingMissing(t *testing.T) {
 		t.Fatal("GetSetting() expected error for missing setting")
 	}
 }
+
+func TestAdlistCRUD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ramdns.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	created, err := s.CreateAdlist(
+		ctx,
+		"HaGeZi Multi",
+		"https://example.com/adlist.txt",
+		true,
+	)
+	if err != nil {
+		t.Fatalf("CreateAdlist() error = %v", err)
+	}
+
+	if created.ID <= 0 {
+		t.Fatalf("created ID = %d, want > 0", created.ID)
+	}
+
+	if created.Name != "HaGeZi Multi" {
+		t.Fatalf("created Name = %q", created.Name)
+	}
+
+	if !created.Enabled {
+		t.Fatal("created Enabled = false, want true")
+	}
+
+	got, err := s.GetAdlist(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetAdlist() error = %v", err)
+	}
+
+	if got.URL != "https://example.com/adlist.txt" {
+		t.Fatalf("URL = %q", got.URL)
+	}
+
+	if err := s.SetAdlistEnabled(ctx, created.ID, false); err != nil {
+		t.Fatalf("SetAdlistEnabled() error = %v", err)
+	}
+
+	got, err = s.GetAdlist(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetAdlist() after disable error = %v", err)
+	}
+
+	if got.Enabled {
+		t.Fatal("Enabled = true after disable, want false")
+	}
+
+	adlists, err := s.ListAdlists(ctx)
+	if err != nil {
+		t.Fatalf("ListAdlists() error = %v", err)
+	}
+
+	if len(adlists) != 1 {
+		t.Fatalf("ListAdlists() returned %d rows, want 1", len(adlists))
+	}
+
+	if err := s.DeleteAdlist(ctx, created.ID); err != nil {
+		t.Fatalf("DeleteAdlist() error = %v", err)
+	}
+
+	if _, err := s.GetAdlist(ctx, created.ID); err == nil {
+		t.Fatal("GetAdlist() after delete expected error")
+	}
+}
+
+func TestCreateAdlistRejectsInvalidInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ramdns.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	if _, err := s.CreateAdlist(ctx, "", "https://example.com/list.txt", true); err == nil {
+		t.Fatal("CreateAdlist() expected error for empty name")
+	}
+
+	if _, err := s.CreateAdlist(ctx, "Test", "", true); err == nil {
+		t.Fatal("CreateAdlist() expected error for empty URL")
+	}
+}
