@@ -213,3 +213,91 @@ func TestCreateAdlistRejectsInvalidInput(t *testing.T) {
 		t.Fatal("CreateAdlist() expected error for empty URL")
 	}
 }
+
+func TestCustomRuleCRUD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ramdns.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	created, err := s.CreateCustomRule(ctx, "ads.example.com", "domain", true)
+	if err != nil {
+		t.Fatalf("CreateCustomRule() error = %v", err)
+	}
+
+	if created.ID <= 0 {
+		t.Fatalf("created ID = %d, want > 0", created.ID)
+	}
+
+	got, err := s.GetCustomRule(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetCustomRule() error = %v", err)
+	}
+
+	if got.Domain != "ads.example.com" {
+		t.Fatalf("Domain = %q, want %q", got.Domain, "ads.example.com")
+	}
+
+	if got.RuleType != "domain" {
+		t.Fatalf("RuleType = %q, want %q", got.RuleType, "domain")
+	}
+
+	if !got.Enabled {
+		t.Fatal("Enabled = false, want true")
+	}
+
+	if err := s.SetCustomRuleEnabled(ctx, created.ID, false); err != nil {
+		t.Fatalf("SetCustomRuleEnabled() error = %v", err)
+	}
+
+	got, err = s.GetCustomRule(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetCustomRule() after disable error = %v", err)
+	}
+
+	if got.Enabled {
+		t.Fatal("Enabled = true after disable, want false")
+	}
+
+	rules, err := s.ListCustomRules(ctx)
+	if err != nil {
+		t.Fatalf("ListCustomRules() error = %v", err)
+	}
+
+	if len(rules) != 1 {
+		t.Fatalf("ListCustomRules() returned %d rows, want 1", len(rules))
+	}
+
+	if err := s.DeleteCustomRule(ctx, created.ID); err != nil {
+		t.Fatalf("DeleteCustomRule() error = %v", err)
+	}
+
+	if _, err := s.GetCustomRule(ctx, created.ID); err == nil {
+		t.Fatal("GetCustomRule() after delete expected error")
+	}
+}
+
+func TestCreateCustomRuleRejectsInvalidInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ramdns.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	if _, err := s.CreateCustomRule(ctx, "", "domain", true); err == nil {
+		t.Fatal("CreateCustomRule() expected error for empty domain")
+	}
+
+	if _, err := s.CreateCustomRule(ctx, "example.com", "invalid", true); err == nil {
+		t.Fatal("CreateCustomRule() expected error for invalid rule type")
+	}
+}
