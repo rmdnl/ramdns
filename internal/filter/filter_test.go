@@ -1,71 +1,115 @@
 package filter
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestFilterExactMatch(t *testing.T) {
 	f := New()
 
-	f.Add("ads.example.com")
+	f.AddExact("ads.example.com")
 
 	if !f.IsBlocked("ads.example.com") {
-		t.Fatal("expected domain to be blocked")
+		t.Fatal("expected exact domain to be blocked")
 	}
 
-	if f.IsBlocked("google.com") {
-		t.Fatal("google.com should not be blocked")
+	if f.IsBlocked("foo.ads.example.com") {
+		t.Fatal("subdomain should not be blocked by exact rule")
+	}
+
+	if f.IsBlocked("example.com") {
+		t.Fatal("parent domain should not be blocked")
+	}
+}
+
+func TestFilterDomainMatch(t *testing.T) {
+	f := New()
+
+	f.AddDomain("example.com")
+
+	tests := []struct {
+		domain  string
+		blocked bool
+	}{
+		{"example.com", true},
+		{"www.example.com", true},
+		{"ads.example.com", true},
+		{"foo.ads.example.com", true},
+		{"example.net", false},
+		{"notexample.com", false},
+	}
+
+	for _, test := range tests {
+		got := f.IsBlocked(test.domain)
+
+		if got != test.blocked {
+			t.Fatalf(
+				"domain=%q expected=%v got=%v",
+				test.domain,
+				test.blocked,
+				got,
+			)
+		}
 	}
 }
 
 func TestFilterCaseInsensitive(t *testing.T) {
 	f := New()
 
-	f.Add("Ads.Example.COM")
-
-	if !f.IsBlocked("ads.example.com") {
-		t.Fatal("expected lowercase domain to be blocked")
-	}
+	f.AddDomain("Ads.Example.COM")
 
 	if !f.IsBlocked("ADS.EXAMPLE.COM") {
 		t.Fatal("expected uppercase domain to be blocked")
 	}
-}
 
-func TestFilterTrailingDot(t *testing.T) {
-	f := New()
-
-	f.Add("ads.example.com.")
-
-	if !f.IsBlocked("ads.example.com") {
-		t.Fatal("expected domain without dot to be blocked")
-	}
-
-	if !f.IsBlocked("ads.example.com.") {
-		t.Fatal("expected domain with dot to be blocked")
+	if !f.IsBlocked("foo.ads.example.com.") {
+		t.Fatal("expected trailing-dot domain to be blocked")
 	}
 }
 
-func TestFilterRemove(t *testing.T) {
+func TestFilterReplace(t *testing.T) {
 	f := New()
 
-	f.Add("ads.example.com")
+	f.AddDomain("old.example.com")
 
-	if !f.IsBlocked("ads.example.com") {
-		t.Fatal("expected domain to be blocked")
+	if !f.IsBlocked("old.example.com") {
+		t.Fatal("expected old rule to work")
 	}
 
-	f.Remove("ads.example.com")
+	f.Replace([]Rule{
+		{
+			Domain: "new.example.com",
+			Type:   RuleDomain,
+		},
+	})
 
-	if f.IsBlocked("ads.example.com") {
-		t.Fatal("expected domain to be unblocked")
+	if f.IsBlocked("old.example.com") {
+		t.Fatal("old rule should no longer exist")
+	}
+
+	if !f.IsBlocked("new.example.com") {
+		t.Fatal("new rule should exist")
 	}
 }
 
 func TestFilterSize(t *testing.T) {
 	f := New()
 
-	f.Add("one.example.com")
-	f.Add("two.example.com")
-	f.Add("three.example.com")
+	f.Replace([]Rule{
+		{
+			Domain: "one.example.com",
+			Type:   RuleExact,
+		},
+		{
+			Domain: "two.example.com",
+			Type:   RuleDomain,
+		},
+		{
+			Domain: "three.example.com",
+			Type:   RuleExact,
+		},
+	})
 
 	if f.Size() != 3 {
 		t.Fatalf(
@@ -73,4 +117,37 @@ func TestFilterSize(t *testing.T) {
 			f.Size(),
 		)
 	}
+}
+
+func TestFilterConcurrentLookup(t *testing.T) {
+	f := New()
+
+	f.Replace([]Rule{
+		{
+			Domain: "example.com",
+			Type:   RuleDomain,
+		},
+	})
+
+	const workers = 50
+	const iterations = 1000
+
+	var wg sync.WaitGroup
+
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+
+			for j := 0; j < iterations; j++ {
+				if !f.IsBlocked("ads.example.com") {
+					t.Error("expected domain to be blocked")
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }

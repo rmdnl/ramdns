@@ -1,8 +1,6 @@
 package metrics
 
-import (
-	"sync/atomic"
-)
+import "sync/atomic"
 
 type Metrics struct {
 	CacheHits     atomic.Uint64

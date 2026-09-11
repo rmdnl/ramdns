@@ -2,18 +2,40 @@ package filter
 
 import (
 	"strings"
-	"sync"
+	"sync/atomic"
 )
 
-type Filter struct {
-	mu      sync.RWMutex
+type RuleType uint8
+
+const (
+	RuleExact RuleType = iota
+	RuleDomain
+)
+
+type Rule struct {
+	Domain string
+	Type   RuleType
+}
+
+type snapshot struct {
+	exact   map[string]struct{}
 	domains map[string]struct{}
+	size    int
+}
+
+type Filter struct {
+	current atomic.Pointer[snapshot]
 }
 
 func New() *Filter {
-	return &Filter{
+	f := &Filter{}
+
+	f.current.Store(&snapshot{
+		exact:   make(map[string]struct{}),
 		domains: make(map[string]struct{}),
-	}
+	})
+
+	return f
 }
 
 func normalizeDomain(domain string) string {
@@ -24,28 +46,105 @@ func normalizeDomain(domain string) string {
 	return domain
 }
 
-func (f *Filter) Add(domain string) {
-	domain = normalizeDomain(domain)
+func buildSnapshot(rules []Rule) *snapshot {
+	exact := make(map[string]struct{})
+	domains := make(map[string]struct{})
 
-	if domain == "" {
-		return
+	for _, rule := range rules {
+		domain := normalizeDomain(rule.Domain)
+
+		if domain == "" {
+			continue
+		}
+
+		switch rule.Type {
+		case RuleExact:
+			exact[domain] = struct{}{}
+
+		case RuleDomain:
+			domains[domain] = struct{}{}
+		}
 	}
 
-	f.mu.Lock()
-	f.domains[domain] = struct{}{}
-	f.mu.Unlock()
+	return &snapshot{
+		exact:   exact,
+		domains: domains,
+		size:    len(exact) + len(domains),
+	}
 }
 
-func (f *Filter) Remove(domain string) {
+func (f *Filter) Replace(rules []Rule) {
+	f.current.Store(buildSnapshot(rules))
+}
+
+func (f *Filter) Add(domain string) {
+	f.AddExact(domain)
+}
+
+func (f *Filter) AddExact(domain string) {
 	domain = normalizeDomain(domain)
 
 	if domain == "" {
 		return
 	}
 
-	f.mu.Lock()
-	delete(f.domains, domain)
-	f.mu.Unlock()
+	current := f.current.Load()
+
+	rules := make([]Rule, 0, current.size+1)
+
+	for domain := range current.exact {
+		rules = append(rules, Rule{
+			Domain: domain,
+			Type:   RuleExact,
+		})
+	}
+
+	for domain := range current.domains {
+		rules = append(rules, Rule{
+			Domain: domain,
+			Type:   RuleDomain,
+		})
+	}
+
+	rules = append(rules, Rule{
+		Domain: domain,
+		Type:   RuleExact,
+	})
+
+	f.Replace(rules)
+}
+
+func (f *Filter) AddDomain(domain string) {
+	domain = normalizeDomain(domain)
+
+	if domain == "" {
+		return
+	}
+
+	current := f.current.Load()
+
+	rules := make([]Rule, 0, current.size+1)
+
+	for domain := range current.exact {
+		rules = append(rules, Rule{
+			Domain: domain,
+			Type:   RuleExact,
+		})
+	}
+
+	for domain := range current.domains {
+		rules = append(rules, Rule{
+			Domain: domain,
+			Type:   RuleDomain,
+		})
+	}
+
+	rules = append(rules, Rule{
+		Domain: domain,
+		Type:   RuleDomain,
+	})
+
+	f.Replace(rules)
 }
 
 func (f *Filter) IsBlocked(domain string) bool {
@@ -55,16 +154,30 @@ func (f *Filter) IsBlocked(domain string) bool {
 		return false
 	}
 
-	f.mu.RLock()
-	_, blocked := f.domains[domain]
-	f.mu.RUnlock()
+	current := f.current.Load()
 
-	return blocked
+	if _, ok := current.exact[domain]; ok {
+		return true
+	}
+
+	for {
+		if _, ok := current.domains[domain]; ok {
+			return true
+		}
+
+		index := strings.IndexByte(domain, '.')
+		if index == -1 {
+			break
+		}
+
+		domain = domain[index+1:]
+	}
+
+	return false
 }
 
 func (f *Filter) Size() int {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
+	current := f.current.Load()
 
-	return len(f.domains)
+	return current.size
 }
