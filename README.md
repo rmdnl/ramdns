@@ -242,7 +242,7 @@ Environment="RAMDNS_UPSTREAMS=1.1.1.1:853|cloudflare-dns.com,8.8.8.8:853|dns.goo
 
 Kenapa pakai TLS?
 
-Karena query DNS ke upstream gak perlu jalan-jalan dalam keadaan telanjang. 🔐
+Karena query DNS ke upstream gak perlu jalan-jalan dalam keadaan kosong. 🔐
 
 Hostname upstream juga digunakan untuk verifikasi identitas server berdasarkan sertifikat TLS.
 
