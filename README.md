@@ -1,304 +1,479 @@
+RAMDNS 🧠⚡
+
+RAMDNS adalah public DNS resolver yang dibangun pakai Go.
+
+Tujuannya simpel:
+
+«DNS harus cepat, aman, simpel, dan gak butuh 47 service cuma buat jawab "example.com".»
+
+RAMDNS fokus ke performa, keamanan, dan reliability. Gak ada dashboard, gak ada database, gak ada control-plane ribet.
+
+Cuma resolver DNS yang kerja, diem, lalu kerja lagi. 🗿
+
+---
+
+🚀 Fitur
+
+- ⚡ DNS UDP/TCP pada port "53"
+- 🔐 DNSSEC validation
+- 🛡️ DNS-over-TLS (DoT) pada port "853"
+- 🌐 DNS-over-HTTPS (DoH) pada port "443"
+- 🚫 Ad & tracker blocking
+- 🔄 Automatic adblock update
+- 🧯 Fail-safe saat update adblock gagal
+- 🚦 Rate limiting berdasarkan IP
+- 🔒 DNS upstream melalui TLS
+- 🧱 systemd security hardening
+- ⚛️ Atomic adblock snapshot
+- 🪶 Tanpa database
+- 🪶 Tanpa dashboard
+- 🪶 Tanpa komponen yang gak diperlukan
+
+Gambaran sederhananya:
+
+Client
+  ↓
 RAMDNS
+  ↓
+Filter
+  ↓
+DNSSEC
+  ↓
+Secure Upstream
+  ↓
+Internet
 
-DNS Resolver publik berperforma tinggi yang dibuat menggunakan Go.
+---
 
-RAMDNS dirancang sebagai DNS data plane yang ringan, cepat, dan memiliki attack surface yang kecil. RAMDNS menyediakan DNS standar, DNS-over-TLS (DoT), DNS-over-HTTPS (DoH), cache dalam memori, dukungan DNSSEC, rate limiting per-IP, serta pemblokiran iklan dan tracker secara otomatis.
+🧠 Kenapa RAMDNS?
 
-RAMDNS sengaja tidak menggunakan dashboard, database, maupun API management agar jalur resolusi DNS tetap sederhana dan ringan.
+Karena kadang kita cuma butuh DNS resolver.
 
-Fitur
+Bukan:
 
-- DNS UDP pada port "53"
-- DNS TCP pada port "53"
-- DNS-over-TLS pada port "853"
-- DNS-over-HTTPS pada port "443"
-- TLS 1.3 untuk DNS terenkripsi
-- Upstream DNS melalui DNS-over-TLS
-- Cache DNS dalam memori
-- Dukungan DNSSEC
-- Dukungan EDNS
-- Ukuran payload EDNS sekitar "1232"
-- Filter iklan dan tracker dalam memori
-- Update adblock otomatis
-- Conditional HTTP request menggunakan ETag / Last-Modified
-- Update adblock fail-safe
-- Rate limiting berdasarkan IP client
-- Graceful shutdown
-- Hardening dan sandbox systemd
-- Tanpa SQLite
-- Tanpa dashboard
-- Tanpa control API
-- Tidak membutuhkan database untuk operasi DNS
+DNS
++ Dashboard
++ Database
++ REST API
++ Redis
++ Message Queue
++ Kubernetes
++ 17 container
++ monitoring dashboard buat monitoring dashboard
 
-Arsitektur
+RAMDNS dibuat sesimpel mungkin.
 
-                         Internet
-                            │
-            ┌───────────────┼────────────────┐
-            │               │                │
-          DNS 53          DoT 853          DoH 443
-        UDP / TCP           TLS              HTTPS
-            │               │                │
-            └───────────────┼────────────────┘
-                            │
-                     ┌──────▼──────┐
-                     │   RAMDNS    │
-                     │             │
-                     │ Rate Limit  │
-                     │   Filter    │
-                     │    Cache    │
-                     │  Resolver   │
-                     └──────┬──────┘
-                            │
-                    Upstream DNS-over-TLS
-                            │
-                    ┌───────┴────────┐
-                    │                │
-                 Cloudflare       Google
-                    DoT             DoT
+Lebih sedikit komponen berarti lebih sedikit yang bisa rusak, lebih sedikit yang harus dirawat, dan lebih kecil attack surface-nya.
 
-Alur adblock:
+Big brain architecture. 🗿
 
-HaGeZi
-   │
-   ▼
-Download HTTPS
-   │
-   ▼
-Parser
-   │
-   ▼
-Compiler
-   │
-   ▼
-Penggantian filter secara atomic
-   │
-   ▼
-Query DNS yang masuk diblokir
+---
 
-Port
+🏗️ Arsitektur
+
+                        INTERNET
+                        │
+                        ▼
+                ┌───────────────┐
+                │    RAMDNS     │
+                │               │
+                │ DNS Resolver  │
+                │ Rate Limiter  │
+                │ Adblock Filter│
+                │ DNSSEC        │
+                └───────┬───────┘
+                        │
+                        ▼
+                 DNS-over-TLS
+                   UPSTREAM
+                  /         \
+                 ▼           ▼
+            Cloudflare     Google
+               DNS           DNS
+
+Client bisa terhubung melalui:
+
+UDP 53   → DNS
+TCP 53   → DNS
+TCP 853  → DNS-over-TLS
+TCP 443  → DNS-over-HTTPS
+
+---
+
+📡 Port
 
 Port| Protokol| Fungsi
-"53"| UDP| DNS standar
-"53"| TCP| DNS standar / fallback
+"53"| UDP| DNS
+"53"| TCP| DNS
 "853"| TCP| DNS-over-TLS
 "443"| TCP| DNS-over-HTTPS
 
-RAMDNS tidak membutuhkan port management untuk operasi normal.
+Gak ada port dashboard.
 
-Kebutuhan
+Gak ada port API.
+
+Gak ada port "cuma buat health check yang akhirnya lupa ditutup". 😭
+
+---
+
+🛠️ Kebutuhan
+
+RAMDNS membutuhkan:
 
 - Linux
-- Go 1.26+
+- Go "1.26+"
 - systemd
-- Akses jaringan ke upstream DNS
-- Sertifikat TLS untuk DoT/DoH
-- Hak akses root saat instalasi dan konfigurasi service
-
-Build
+- Koneksi internet
+- Hak akses root untuk deployment
 
 Clone repository:
 
 git clone git@github.com:rmdnl/ramdns.git
 cd ramdns
 
-Build:
+---
+
+🔨 Build
+
+Sinkronkan dependency:
 
 go mod tidy
-go test ./...
+
+Build:
+
 go build -o ramdns ./cmd/ramdns
 
-Karena RAMDNS menggunakan port privileged, berikan capability:
+Test:
 
-sudo setcap cap_net_bind_service=ep ./ramdns
+go test ./...
 
-Cek:
+Kalau "go test" merah, jangan langsung nyalahin server.
 
-getcap ./ramdns
+Kemungkinan besar kodenya emang lagi ngambek. 😭
 
-Hasil yang diharapkan:
+---
 
-./ramdns cap_net_bind_service=ep
+▶️ Menjalankan RAMDNS
 
-Konfigurasi
+Binary production:
 
-RAMDNS menggunakan environment variable untuk konfigurasi runtime.
+/opt/ramdns/ramdns
 
-Upstream DNS
+Nama service:
 
-Contoh:
+ramdns.service
 
-Environment="RAMDNS_UPSTREAMS=1.1.1.1:853|cloudflare-dns.com,8.8.8.8:853|dns.google"
+Cek status:
 
-RAMDNS berkomunikasi dengan upstream menggunakan DNS-over-TLS.
+sudo systemctl status ramdns
 
-Adblock
+Start:
 
-Source adblock dikonfigurasi melalui:
+sudo systemctl start ramdns
 
-Environment="RAMDNS_ADLIST_URL=https://example.com/list.txt"
+Stop:
 
-RAMDNS menggunakan satu source adblock.
+sudo systemctl stop ramdns
 
-Contoh konfigurasi:
+Restart:
 
-Environment="RAMDNS_ADLIST_URL=https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"
-
-Adblock dimuat saat RAMDNS startup dan diperbarui otomatis setiap 6 jam.
-
-Tidak perlu rebuild binary saat mengganti URL adblock.
-
-Mengganti Source Adblock
-
-Edit:
-
-sudo nano /etc/systemd/system/ramdns.service.d/adlist.conf
-
-Contoh:
-
-[Service]
-Environment="RAMDNS_ADLIST_URL=https://example.com/list-baru.txt"
-
-Kemudian:
-
-sudo systemctl daemon-reload
 sudo systemctl restart ramdns
 
-Cek hasil update:
+Aktifkan saat boot:
 
-sudo journalctl -u ramdns --since "2 minutes ago" --no-pager -o cat | grep adlist
+sudo systemctl enable ramdns
 
-Contoh berhasil:
+Lihat log:
 
-adlist update successful url=https://example.com/list-baru.txt rules=180000
+sudo journalctl -u ramdns -f
 
-Update Adblock Otomatis
+---
 
-Worker adblock melakukan proses berikut:
+🌍 DNS Upstream
 
-1. Memuat list saat RAMDNS startup.
-2. Mengunduh list melalui HTTPS.
-3. Mem-parsing format domain.
-4. Mengompilasi rules.
-5. Mengganti filter aktif secara atomic.
-6. Mengulangi proses setiap 6 jam.
+RAMDNS menggunakan DNS-over-TLS untuk komunikasi dengan server upstream.
 
-Jika server source mendukung ETag atau Last-Modified, RAMDNS menggunakan conditional request agar tidak selalu mengunduh data penuh.
+Deployment saat ini:
 
-Jika update gagal, rules lama tetap aktif.
+1.1.1.1:853 | cloudflare-dns.com
+8.8.8.8:853 | dns.google
 
-Dengan demikian, kegagalan source adblock tidak menyebabkan sistem kehilangan filter yang sedang digunakan.
+Konfigurasi:
 
-Format Adblock yang Didukung
+[Service]
+Environment="RAMDNS_UPSTREAMS=1.1.1.1:853|cloudflare-dns.com,8.8.8.8:853|dns.google"
 
-Domain biasa
+Kenapa pakai TLS?
 
-ads.example.com
+Karena query DNS ke upstream gak perlu jalan-jalan dalam keadaan telanjang. 🔐
+
+Hostname upstream juga digunakan untuk verifikasi identitas server berdasarkan sertifikat TLS.
+
+---
+
+🚫 Adblock
+
+RAMDNS punya adblock bawaan.
+
+Sumber default:
+
+https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt
+
+Konfigurasi:
+
+[Service]
+Environment="RAMDNS_ADLIST_URL=https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"
+
+---
+
+🔄 Automatic Adblock Update
+
+RAMDNS gak cuma download blocklist sekali terus pura-pura lupa.
+
+Worker adblock melakukan:
+
+Service Start
+     │
+     ▼
+Download Blocklist
+     │
+     ▼
+Parse Rules
+     │
+     ▼
+Compile Rules
+     │
+     ▼
+Atomic Swap
+     │
+     ▼
+Wait 6 Hours
+     │
+     └──────────► Repeat
+
+Update dilakukan:
+
+Saat startup
+Setiap 6 jam
+
+---
+
+🧯 Fail-safe Adblock
+
+Ini bagian penting.
+
+Misalnya source blocklist lagi:
+
+down
+timeout
+error
+404
+server ngambek
+
+RAMDNS gak akan menghapus blocklist yang sedang aktif.
+
+Alurnya:
+
+Blocklist Lama
+      │
+      ▼
+Download Baru
+      │
+      ├── Gagal ──────► Tetap pakai blocklist lama
+      │
+      ▼
+Parse + Compile
+      │
+      ▼
+Atomic Swap
+
+Jadi kalau internet lagi batuk, adblock gak ikut mati.
+
+---
+
+📋 Format Blocklist
+
+RAMDNS mendukung beberapa format umum.
+
+Format Hosts
+
+0.0.0.0 example.com
+127.0.0.1 example.org
+:: example.net
+::1 example.test
+
+Sintaks Adblock
+
+||example.com^
+
+Domain Biasa
+
+example.com
+ads.example.org
 tracker.example.net
 
-Format hosts
+Komentar dan baris kosong akan diabaikan.
 
-0.0.0.0 ads.example.com
-127.0.0.1 tracker.example.net
+---
 
-Format adblock
+🧬 Domain Matching
 
-||ads.example.com^
+Kalau:
 
-Komentar dan baris kosong diabaikan.
+example.com
 
-Cara Kerja Blocking
+diblokir, domain turunannya juga ikut kena:
 
-Rules domain disimpan di memori dan diperiksa sebelum cache maupun upstream DNS.
-
-Contoh rule:
-
+example.com
+www.example.com
 ads.example.com
+tracker.ads.example.com
 
-akan memblokir:
+Jadi gak perlu masukin satu-satu kayak daftar mantan. 😭
 
-ads.example.com
-foo.ads.example.com
-bar.foo.ads.example.com
+RAMDNS melakukan pencocokan terhadap domain dan parent domain.
 
-Query yang diblokir akan mendapatkan response DNS "NXDOMAIN".
+---
 
-Contoh log:
+⚛️ Atomic Filter Update
 
-blocked query=ads.example.com.
+Adblock menggunakan snapshot.
 
-DNS-over-TLS
+Ketika blocklist baru selesai diproses:
+
+Old Snapshot
+     │
+     │ DNS queries tetap jalan
+     │
+     ▼
+New Snapshot
+     │
+     ▼
+Atomic Swap
+
+Resolver gak perlu restart.
+
+DNS query juga gak perlu antre nunggu blocklist selesai di-download.
+
+Jadi worker adblock boleh sibuk, resolver tetap kerja.
+
+---
+
+🔐 DNSSEC
+
+RAMDNS melakukan validasi DNSSEC.
+
+Tes:
+
+dig @127.0.0.1 cloudflare.com A +dnssec
+
+Cari flag:
+
+ad
+
+Flag "ad" menunjukkan response sudah tervalidasi DNSSEC.
+
+---
+
+🔒 DNS-over-TLS
 
 RAMDNS menyediakan DoT pada:
 
-TCP/853
+TCP 853
 
-TLS 1.3 digunakan untuk koneksi DNS terenkripsi.
+Hostname:
 
-Contoh konfigurasi client:
+dot.ramdns.my.id
 
-Server       : dot.example.com
-Port         : 853
-TLS hostname : dot.example.com
+TLS minimum:
 
-Hostname harus sesuai dengan sertifikat TLS.
+TLS 1.3
 
-Pengujian:
+Certificate:
+
+/etc/ramdns/tls/fullchain.pem
+
+Private key:
+
+/etc/ramdns/tls/privkey.pem
+
+Tes TLS:
 
 openssl s_client \
-  -connect dot.example.com:853 \
-  -servername dot.example.com \
-  -tls1_3
+  -connect dot.ramdns.my.id:853 \
+  -servername dot.ramdns.my.id
 
-Hasil yang diharapkan:
+Tes DNS-over-TLS:
 
-Protocol  : TLSv1.3
+kdig @dot.ramdns.my.id example.com +tls
+
+Kalau muncul:
+
 Verify return code: 0 (ok)
 
-DNS-over-HTTPS
+TLS-nya lagi gak drama. 👍
+
+---
+
+🌐 DNS-over-HTTPS
 
 RAMDNS menyediakan DoH pada:
 
-HTTPS/443
+TCP 443
 
 Endpoint:
 
 /dns-query
 
-Format standar yang digunakan:
+Hostname:
 
-application/dns-message
+doh.ramdns.my.id
 
-Request ke "/" dapat menghasilkan:
+DoH menggunakan format DNS wire-format melalui HTTP.
 
-HTTP 404
+Contoh:
 
-Hal tersebut normal jika endpoint DoH berada di "/dns-query".
+curl \
+  --http2 \
+  -H 'Content-Type: application/dns-message' \
+  --data-binary @query.bin \
+  https://doh.ramdns.my.id/dns-query
 
-Request DNS yang valid ke "/dns-query" harus menghasilkan:
+Response yang diharapkan:
 
 HTTP 200
 Content-Type: application/dns-message
 
-Rate Limiting
+---
 
-RAMDNS menggunakan rate limiting berdasarkan IP client.
+🚦 Rate Limiting
 
-Konfigurasi saat ini:
+RAMDNS punya rate limiter berdasarkan IP client.
 
-50 request/detik per IP
-Burst: 100 request
-Maksimum IP yang dilacak: 20.000
+Konfigurasi default:
 
-Tujuannya adalah mengurangi abuse tanpa mengganggu penggunaan DNS normal.
+Rate        : 50 request/detik/IP
+Burst       : 100
+Tracked IP  : 20.000
+Cleanup     : 5 menit
 
-State rate limiter disimpan di memori.
+Tujuannya membantu mengurangi:
 
-Keamanan
+- DNS flood
+- Abuse
+- Resource exhaustion
+- Query spam
+- Satu client yang tiba-tiba merasa server ini milik neneknya
 
-RAMDNS dirancang dengan attack surface seminimal mungkin.
+Rate limiting bukan pengganti firewall atau perlindungan DDoS jaringan.
 
-Service systemd menggunakan beberapa pembatasan keamanan:
+---
+
+🧱 Security Hardening
+
+Service RAMDNS menggunakan systemd hardening.
+
+Konfigurasi utama:
 
 NoNewPrivileges=true
 PrivateTmp=true
@@ -313,21 +488,36 @@ RestrictRealtime=true
 RestrictNamespaces=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
+LimitNOFILE=65536
+TasksMax=4096
 
-RAMDNS berjalan sebagai user yang tidak memiliki hak root.
+RAMDNS hanya diberikan capability:
 
-Firewall sebaiknya hanya membuka port yang diperlukan.
+CAP_NET_BIND_SERVICE
 
-Port publik RAMDNS:
+Capability ini diperlukan untuk bind ke port privileged seperti:
 
-53/tcp
-53/udp
-853/tcp
-443/tcp
+53
+443
+853
 
-Port SSH harus disesuaikan dengan kebutuhan administrasi server.
+Capability lain tidak diberikan.
 
-Contoh Firewall UFW
+Prinsipnya:
+
+Butuh permission?
+→ kasih seperlunya.
+
+Gak perlu?
+→ jangan dikasih.
+
+Least privilege, bukan "kasih root aja biar gampang". 🗿
+
+---
+
+🔥 Firewall
+
+Contoh UFW:
 
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
@@ -338,287 +528,497 @@ sudo ufw allow 53/udp
 sudo ufw allow 853/tcp
 sudo ufw allow 443/tcp
 
-sudo ufw --force enable
-
-Pastikan akses SSH sudah aman sebelum mengaktifkan firewall pada VPS remote.
-
-Service systemd
-
-Contoh service:
-
-[Unit]
-Description=RAMDNS Personal DNS Resolver
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/opt/ramdns
-ExecStart=/opt/ramdns/ramdns
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-
-Aktifkan:
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now ramdns
+sudo ufw enable
 
 Cek:
 
-sudo systemctl status ramdns
+sudo ufw status verbose
 
-Pemeriksaan Dasar
+Jangan buka port yang gak diperlukan.
 
-Cek service:
+Internet bukan LAN pribadi lu. 😭
 
-sudo systemctl is-active ramdns
+---
 
-Cek port:
+🧪 Pengujian
 
-sudo ss -lntup | grep -E ':(53|443|853)\b'
+DNS UDP
 
-Hasil yang diharapkan:
+dig @127.0.0.1 example.com A
 
-*:53
-*:443
-*:853
+DNS TCP
 
-Tes DNS:
+dig @127.0.0.1 example.com A +tcp
 
-dig @127.0.0.1 google.com A +short
-
-Tes DNSSEC:
+DNSSEC
 
 dig @127.0.0.1 cloudflare.com A +dnssec
 
-Cari:
+Cek Listener
 
-status: NOERROR
-flags: qr rd ra ad
+sudo ss -lntup
 
-Pengujian Adblock
+Listener utama:
 
-Ambil domain yang ada di source adblock kemudian:
+*:53
+*:853
+*:443
 
-dig @127.0.0.1 ad.example.com A +short
+---
 
-Domain yang diblokir tidak boleh mendapatkan IP normal.
+🧪 Tes Adblock
 
-Cek log:
-
-sudo journalctl -u ramdns --since "5 minutes ago" --no-pager -o cat | grep 'blocked query'
+Gunakan domain yang memang ada di blocklist aktif.
 
 Contoh:
 
-blocked query=ad.example.com.
+dig @127.0.0.1 ad.001zb.com A +short
 
-Performa
+Jika diblokir, resolver tidak akan memberikan IP normal.
 
-RAMDNS menjaga jalur resolusi DNS tetap berada di memori dan tidak menggunakan database pada setiap query.
-
-Jalur utama:
-
-Client
-  ↓
-Rate Limiter
-  ↓
-Adblock Filter
-  ↓
-Cache
-  ↓
-Single-flight
-  ↓
-Upstream DNS-over-TLS
-
-Pendekatan ini mengurangi operasi storage dan network yang tidak diperlukan.
-
-Tes latency sederhana:
-
-for i in 1 2 3 4 5; do
-    /usr/bin/time -f '%e s' \
-        dig @127.0.0.1 google.com A +short >/dev/null
-done
-
-Untuk benchmark produksi, gunakan traffic generator dari jaringan eksternal agar hasil tidak tercampur dengan performa loopback VPS.
-
-Monitoring
-
-Lihat log:
-
-sudo journalctl -u ramdns --since "10 minutes ago" --no-pager -o cat
-
-Follow log:
+Cek log:
 
 sudo journalctl -u ramdns -f
 
-Cek penggunaan resource:
+Contoh:
 
-ps -o pid,user,%cpu,%mem,rss,vsz,cmd -C ramdns
+blocked query=ad.001zb.com.
 
-Cek socket:
+Kalau muncul begitu:
 
-sudo ss -s
+RAMDNS: 1
+Iklan: 0
 
-Troubleshooting
+🗿
 
-RAMDNS tidak mau start
+---
 
-sudo systemctl status ramdns
-sudo journalctl -u ramdns -n 100 --no-pager
+📊 Monitoring
 
-Port 53 sudah digunakan
+Status service:
 
-sudo ss -lntup | grep ':53'
+systemctl status ramdns
 
-Cari service lain yang menggunakan port tersebut.
+Resource:
 
-Sertifikat DoT bermasalah
+top
 
-openssl s_client \
-  -connect dot.example.com:853 \
-  -servername dot.example.com \
-  -tls1_3
+atau:
 
-Pastikan:
+htop
 
-- sertifikat masih valid
-- hostname terdapat pada sertifikat
-- file certificate dapat dibaca RAMDNS
-- file private key dapat dibaca RAMDNS
-- TCP/853 dibuka firewall
+Port:
 
-DoH menghasilkan 404
+sudo ss -lntup
 
-Request ke "/" dapat menghasilkan "404".
+Log realtime:
 
-Gunakan endpoint:
+sudo journalctl -u ramdns -f
 
-https://dot.example.com/dns-query
+Log satu jam terakhir:
 
-dengan DNS wire-format dan:
+sudo journalctl -u ramdns --since "1 hour ago"
 
-Content-Type: application/dns-message
+Cari aktivitas adblock:
 
-Adblock gagal update
+sudo journalctl -u ramdns --since "1 hour ago" | grep adlist
+
+---
+
+🩺 Troubleshooting
+
+RAMDNS gak mau start
 
 Cek:
 
-sudo journalctl -u ramdns --since "1 hour ago" --no-pager -o cat | grep adlist
-
-Jika update gagal, rules lama tetap digunakan.
-
-Cek URL:
-
-sudo systemctl cat ramdns | grep RAMDNS_ADLIST_URL
-
-Domain tidak terblokir
-
-Pastikan domain tersebut memang ada di source adblock.
-
-Cek update:
-
-sudo journalctl -u ramdns --since "1 hour ago" --no-pager -o cat | grep adlist
+sudo systemctl status ramdns
 
 Kemudian:
 
-sudo journalctl -u ramdns --since "5 minutes ago" --no-pager -o cat | grep 'blocked query'
+sudo journalctl -u ramdns -n 100 --no-pager
 
-Struktur Project
+Biasanya error-nya bakal ngomong sendiri.
+
+Kalau masih bingung, baca pelan-pelan.
+
+Server gak bisa baca pikiran. 😭
+
+---
+
+Port 53 bentrok
+
+Cek:
+
+sudo ss -lntup | grep ':53'
+
+Kalau "systemd-resolved" masih menggunakan stub listener, konfigurasi:
+
+[Resolve]
+DNSStubListener=no
+
+Kemudian:
+
+sudo systemctl restart systemd-resolved
+
+---
+
+DoT error
+
+Cek sertifikat:
+
+openssl x509 \
+  -in /etc/ramdns/tls/fullchain.pem \
+  -noout \
+  -subject \
+  -issuer \
+  -dates \
+  -ext subjectAltName
+
+Tes:
+
+openssl s_client \
+  -connect dot.ramdns.my.id:853 \
+  -servername dot.ramdns.my.id
+
+---
+
+DoH error
+
+Cek port:
+
+sudo ss -lntp | grep ':443'
+
+Cek log:
+
+sudo journalctl -u ramdns -n 100 --no-pager
+
+---
+
+Adblock gak update
+
+Cek environment:
+
+sudo systemctl show ramdns --property=Environment
+
+Cek log:
+
+sudo journalctl -u ramdns --since "1 hour ago"
+
+Cari:
+
+adlist
+
+Kalau update gagal, RAMDNS seharusnya tetap memakai snapshot sebelumnya.
+
+---
+
+📁 Struktur Proyek
 
 ramdns/
 ├── cmd/
 │   └── ramdns/
 │       └── main.go
+│
 ├── internal/
 │   ├── adlist/
-│   │   ├── compiler.go
-│   │   ├── downloader.go
 │   │   ├── manager.go
 │   │   ├── parser.go
 │   │   └── worker.go
-│   ├── cache/
-│   ├── dns/
-│   ├── doh/
+│   │
 │   ├── filter/
-│   ├── metrics/
-│   ├── ratelimit/
-│   └── upstream/
+│   │   └── filter.go
+│   │
+│   └── resolver/
+│       └── ...
+│
 ├── go.mod
-└── go.sum
+├── go.sum
+├── README.md
+└── ...
 
-Prinsip Desain
+Komponen dashboard, API pengelolaan, dan database sudah tidak menjadi bagian dari arsitektur resolver.
 
-Data plane tetap kecil
+Karena:
 
-Resolusi DNS tidak bergantung pada dashboard, database, atau management API.
+DNS resolver ≠ ERP perusahaan
 
-Prioritaskan memori
+---
 
-Cache dan filter disimpan di memori agar latency tetap rendah.
+⚡ Performa
 
-Update adblock fail-safe
+RAMDNS dirancang untuk:
 
-Rules baru hanya menggantikan rules lama setelah berhasil di-download dan dikompilasi.
+- Latensi rendah
+- Concurrent request
+- Penggunaan RAM rendah
+- Jalur query sederhana
+- Dependency seminimal mungkin
+- Overhead rendah
 
-Minimalkan privilege
+Pengujian lokal menunjukkan:
 
-RAMDNS berjalan sebagai user non-root dengan pembatasan systemd.
+- DNS query berhasil dengan latency sekitar milidetik
+- Concurrent query dapat diproses
+- Penggunaan resource relatif kecil
+- Update blocklist tidak membutuhkan restart
+- Snapshot filter dapat diganti secara atomik
 
-Minimalkan dependency
+Untuk benchmark serius, gunakan tool khusus DNS seperti:
 
-Semakin sedikit komponen, semakin kecil kompleksitas operasional dan attack surface.
+dnsperf
+resperf
+kdig
+dig
 
-Ukur sebelum tuning
+Jangan menjadikan:
 
-Tuning dilakukan berdasarkan hasil pengujian, bukan sekadar menaikkan limit secara acak.
+for i in {1..1000}; do dig ...; done
 
-Deployment Saat Ini
+sebagai benchmark QPS yang sakral.
 
-Konfigurasi deployment:
+Itu juga ngukur overhead bikin proses baru. 😭
 
-DNS:
-  UDP/TCP 53
+---
 
-DoT:
-  TCP 853
-  TLS 1.3
+🧠 Prinsip Desain
 
-DoH:
-  TCP 443
-  HTTP/2
-  application/dns-message
+1. Simpel
 
-Adblock:
-  HaGeZi Multi
-  1 source
-  Update otomatis setiap 6 jam
+Komponen lebih sedikit berarti:
 
-Upstream:
-  Cloudflare DNS-over-TLS
-  Google DNS-over-TLS
+lebih gampang dirawat
+lebih gampang di-debug
+attack surface lebih kecil
 
-Proteksi:
-  Rate limiting per-IP
-  UFW firewall
-  systemd hardening
+2. Cepat
 
-Catatan Keamanan
+Jalur query DNS dibuat sesingkat mungkin.
 
-RAMDNS dirancang untuk mengurangi attack surface dan menangani abuse umum, tetapi tidak ada layanan publik di Internet yang dapat dijamin 100% kebal terhadap serangan atau DDoS.
+3. Atomik
 
-Untuk deployment dengan trafik sangat besar, perlindungan DDoS di level jaringan, filtering upstream, kapasitas bandwidth, monitoring, dan capacity planning tambahan mungkin diperlukan.
+Blocklist dapat diperbarui tanpa restart resolver.
 
-Lisensi
+4. Fail-safe
 
-Lihat file lisensi pada repository untuk informasi lisensi terbaru.
+Kalau source blocklist mati, snapshot lama tetap dipakai.
 
-Status
+5. Least Privilege
 
-RAMDNS ditujukan sebagai DNS resolver publik yang ringan dengan dukungan DNS terenkripsi dan pemblokiran domain otomatis.
+Service cuma dikasih capability yang diperlukan.
 
-Management functionality sengaja tidak ditempatkan di dalam DNS data plane agar sistem tetap sederhana, cepat, dan mudah diamankan.
+6. Stateless
+
+Operasi DNS normal tidak membutuhkan database.
+
+7. Observable
+
+Log cukup jelas untuk melihat:
+
+- Status service
+- Update blocklist
+- Domain yang diblokir
+- Error runtime
+
+---
+
+🛡️ Catatan Keamanan
+
+RAMDNS adalah public DNS resolver.
+
+Artinya server tetap bisa menjadi target:
+
+- DNS flood
+- Query abuse
+- Connection exhaustion
+- TLS handshake abuse
+- HTTP abuse
+- Network scanning
+- Resource exhaustion
+- DDoS
+
+Dan perlu ditegaskan:
+
+«Gak ada public server yang bisa dijamin 100% kebal DDoS.»
+
+RAMDNS sudah punya beberapa lapisan pertahanan:
+
+Firewall
+   ↓
+systemd hardening
+   ↓
+Rate limiting
+   ↓
+DNS resolver
+   ↓
+Secure upstream
+
+Tapi kalau serangannya sudah level jaringan besar, aplikasi DNS doang gak bisa tiba-tiba berubah jadi superhero. 🗿
+
+Perlindungan jaringan tambahan tetap diperlukan jika skala deployment memang membutuhkannya.
+
+---
+
+✅ Checklist Production
+
+Sebelum dianggap siap tempur:
+
+[ ] UDP 53 aktif
+[ ] TCP 53 aktif
+[ ] DoT 853 aktif
+[ ] DoH 443 aktif
+[ ] Sertifikat TLS valid
+[ ] TLS 1.3 aktif
+[ ] DNSSEC aktif
+[ ] Upstream DNS-over-TLS aktif
+[ ] Adblock aktif
+[ ] Adblock update berjalan
+[ ] Rate limiting aktif
+[ ] UFW aktif
+[ ] systemd hardening aktif
+[ ] Log normal
+[ ] Resource usage normal
+
+Kalau semuanya centang:
+
+RAMDNS READY 🚀
+
+---
+
+🔍 Pemeriksaan Cepat
+
+Jalankan:
+
+systemctl is-active ramdns
+
+sudo ss -lntup | grep -E ':(53|443|853)\b'
+
+dig @127.0.0.1 example.com A
+
+dig @127.0.0.1 cloudflare.com A +dnssec
+
+sudo journalctl -u ramdns --since "10 minutes ago" --no-pager
+
+---
+
+📦 Deployment Saat Ini
+
+Konfigurasi deployment saat ini:
+
+Binary
+/opt/ramdns/ramdns
+
+Service
+ramdns.service
+
+DNS
+UDP 53
+TCP 53
+
+DNS terenkripsi
+TCP 853
+TCP 443
+
+DoT
+dot.ramdns.my.id
+
+DoH
+doh.ramdns.my.id
+
+Upstream
+1.1.1.1:853
+8.8.8.8:853
+
+Adblock
+HaGeZi Multi OnlyDomains
+
+Update adblock
+Setiap 6 jam
+
+TLS
+TLS 1.3
+
+---
+
+🧹 Kenapa Tanpa Dashboard?
+
+Karena RAMDNS sekarang fokus menjadi resolver.
+
+Bukan:
+
+Dashboard → API → Database → Resolver
+
+Tapi:
+
+Client
+  ↓
+RAMDNS
+  ↓
+Done.
+
+Konfigurasi dilakukan melalui systemd dan environment variable.
+
+Lebih sedikit moving parts.
+
+Lebih sedikit drama.
+
+---
+
+📚 Repository
+
+Source code:
+
+https://github.com/rmdnl/ramdns
+
+---
+
+📄 Lisensi
+
+Lisensi RAMDNS mengikuti file "LICENSE" di repository.
+
+---
+
+🏁 Status
+
+RAMDNS saat ini menyediakan:
+
+Public DNS Resolver
+        +
+DNSSEC
+        +
+DNS-over-TLS
+        +
+DNS-over-HTTPS
+        +
+Ad & Tracker Blocking
+        +
+Automatic Blocklist Update
+        +
+Rate Limiting
+        +
+Secure Upstream
+        +
+systemd Hardening
+
+Dashboard?
+
+Tidak ada.
+
+Database?
+
+Tidak perlu.
+
+Drama?
+
+Diusahakan seminimal mungkin.
+
+---
+
+RAMDNS
+
+DNS yang kerjaannya cuma satu: jawab DNS.
+
+Cepat.
+Aman.
+Simpel.
+
+Dan kalau bisa, jangan bikin server nangis. 🗿⚡
