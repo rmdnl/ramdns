@@ -289,27 +289,6 @@ func main() {
 	}
 
 	/*
-		Local control API + metrics.
-
-		IMPORTANT:
-		Only localhost can access this server.
-	*/
-	controlMux := http.NewServeMux()
-
-
-	controlMux.Handle("/metrics", metrics.NewHandler(resolver.metrics))
-
-	controlServer := &http.Server{
-		Addr:              "127.0.0.1:8080",
-		Handler:           controlMux,
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 3 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       15 * time.Second,
-		MaxHeaderBytes:    16 * 1024,
-	}
-
-	/*
 		Start DNS UDP.
 	*/
 	go func() {
@@ -354,23 +333,10 @@ func main() {
 		}
 	}()
 
-	/*
-		Start local control API.
-	*/
-	go func() {
-		log.Printf("starting control API on %s", controlServer.Addr)
-
-		if err := controlServer.ListenAndServe(); err != nil &&
-			err != http.ErrServerClosed {
-			log.Fatalf("control API failed: %v", err)
-		}
-	}()
-
 	log.Printf("RAMDNS started")
 	log.Printf("DNS UDP/TCP: %s", listenAddr)
 	log.Printf("DoT: %s", dotListen)
 	log.Printf("DoH: %s", dohListen)
-	log.Printf("Control API: %s", controlServer.Addr)
 
 	/*
 		Graceful shutdown.
@@ -391,10 +357,6 @@ func main() {
 		10*time.Second,
 	)
 	defer cancel()
-
-	if err := controlServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("control API shutdown error: %v", err)
-	}
 
 	if err := dohServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("DoH shutdown error: %v", err)

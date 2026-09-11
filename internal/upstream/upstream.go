@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -15,12 +16,18 @@ import (
 const (
 	defaultTimeout = 3 * time.Second
 	perServerTime  = 1500 * time.Millisecond
+	dialTimeout    = 1500 * time.Millisecond
+	idleTimeout    = 30 * time.Second
 )
 
 type Server struct {
 	Addr       string
 	ServerName string
 	Client     *dns.Client
+
+	mu       sync.Mutex
+	conn     *dns.Conn
+	lastUsed time.Time
 }
 
 type Resolver struct {
@@ -34,38 +41,22 @@ func New(specs []string) (*Resolver, error) {
 
 	servers := make([]*Server, 0, len(specs))
 
-	for _, spec := range specs {
-		spec = strings.TrimSpace(spec)
-
-		if spec == "" {
+	for _, raw := range specs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
 			continue
 		}
 
-		parts := strings.SplitN(spec, "|", 2)
-
+		parts := strings.SplitN(raw, "|", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf(
-				"invalid upstream specification: %q",
-				spec,
-			)
+			return nil, fmt.Errorf("invalid upstream spec %q, expected addr|servername", raw)
 		}
 
 		addr := strings.TrimSpace(parts[0])
 		serverName := strings.TrimSpace(parts[1])
 
 		if addr == "" || serverName == "" {
-			return nil, fmt.Errorf(
-				"invalid upstream specification: %q",
-				spec,
-			)
-		}
-
-		if _, _, err := net.SplitHostPort(addr); err != nil {
-			return nil, fmt.Errorf(
-				"invalid upstream address %q: %w",
-				addr,
-				err,
-			)
+			return nil, fmt.Errorf("invalid upstream spec %q", raw)
 		}
 
 		servers = append(servers, &Server{
@@ -87,69 +78,158 @@ func New(specs []string) (*Resolver, error) {
 		return nil, errors.New("no valid upstream servers configured")
 	}
 
-	return &Resolver{
-		Servers: servers,
-	}, nil
+	return &Resolver{Servers: servers}, nil
 }
 
-func (r *Resolver) Exchange(
-	ctx context.Context,
-	req *dns.Msg,
-) (*dns.Msg, error) {
+func (s *Server) closeConnLocked() {
+	if s.conn != nil {
+		_ = s.conn.Close()
+		s.conn = nil
+	}
+}
+
+func (s *Server) closeConn() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeConnLocked()
+}
+
+func (s *Server) exchange(ctx context.Context, req *dns.Msg) (*dns.Msg, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.conn != nil && time.Since(s.lastUsed) > idleTimeout {
+		s.closeConnLocked()
+	}
+
+	if s.conn == nil {
+		dialer := &net.Dialer{Timeout: dialTimeout}
+
+		raw, err := dialer.DialContext(ctx, "tcp", s.Addr)
+		if err != nil {
+			return nil, err
+		}
+
+		tlsConn := tls.Client(raw, s.Client.TLSConfig.Clone())
+
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = tlsConn.SetDeadline(deadline)
+		}
+
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = tlsConn.Close()
+			return nil, err
+		}
+
+		s.conn = &dns.Conn{Conn: tlsConn}
+	}
+
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = s.conn.SetDeadline(deadline)
+	} else {
+		_ = s.conn.SetDeadline(time.Time{})
+	}
+
+	if err := s.conn.WriteMsg(req); err != nil {
+		s.closeConnLocked()
+		return nil, err
+	}
+
+	resp, err := s.conn.ReadMsg()
+	if err != nil {
+		s.closeConnLocked()
+		return nil, err
+	}
+
+	s.lastUsed = time.Now()
+	return resp, nil
+}
+
+func (r *Resolver) Exchange(ctx context.Context, req *dns.Msg) (*dns.Msg, error) {
 	if req == nil {
 		return nil, errors.New("nil DNS request")
 	}
 
-	var lastErr error
+	if len(r.Servers) == 0 {
+		return nil, errors.New("no upstream servers configured")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type result struct {
+		msg *dns.Msg
+		err error
+	}
+
+	results := make(chan result, len(r.Servers))
+	var wg sync.WaitGroup
 
 	for _, server := range r.Servers {
-		if server == nil || server.Client == nil {
-			continue
+		server := server
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			timeout := perServerTime
+
+			if deadline, ok := ctx.Deadline(); ok {
+				remaining := time.Until(deadline)
+				if remaining <= 0 {
+					results <- result{err: context.DeadlineExceeded}
+					return
+				}
+				if remaining < timeout {
+					timeout = remaining
+				}
+			}
+
+			serverCtx, serverCancel := context.WithTimeout(ctx, timeout)
+			defer serverCancel()
+
+			resp, err := server.exchange(serverCtx, req)
+			results <- result{msg: resp, err: err}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var lastErr error
+
+	for res := range results {
+		if res.err == nil && res.msg != nil {
+			cancel()
+			return res.msg, nil
 		}
 
-		remaining := time.Until(deadline(ctx))
-
-		if remaining <= 0 {
-			return nil, ctx.Err()
-		}
-
-		timeout := perServerTime
-		if remaining < timeout {
-			timeout = remaining
-		}
-
-		serverCtx, cancel := context.WithTimeout(ctx, timeout)
-
-		resp, _, err := server.Client.ExchangeContext(
-			serverCtx,
-			req,
-			server.Addr,
-		)
-
-		cancel()
-
-		if err == nil {
-			return resp, nil
-		}
-
-		lastErr = err
-
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if res.err != nil {
+			lastErr = res.err
 		}
 	}
 
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	if lastErr == nil {
-		lastErr = errors.New("all upstreams failed")
+		lastErr = errors.New("all upstream servers failed")
 	}
 
 	return nil, lastErr
 }
 
-func deadline(ctx context.Context) time.Time {
-	if deadline, ok := ctx.Deadline(); ok {
-		return deadline
+func (r *Resolver) Close() {
+	if r == nil {
+		return
 	}
 
-	return time.Now().Add(defaultTimeout)
+	for _, server := range r.Servers {
+		if server != nil {
+			server.closeConn()
+		}
+	}
 }
