@@ -70,7 +70,7 @@ func (s *Store) ListCustomRules(ctx context.Context) ([]CustomRule, error) {
 	}
 	defer rows.Close()
 
-	var result []CustomRule
+	result := make([]CustomRule, 0)
 
 	for rows.Next() {
 		var (

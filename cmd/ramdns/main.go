@@ -21,6 +21,7 @@ import (
 	"github.com/ramdns/ramdns/internal/filter"
 	"github.com/ramdns/ramdns/internal/metrics"
 	"github.com/ramdns/ramdns/internal/ratelimit"
+	"github.com/ramdns/ramdns/internal/store"
 	"github.com/ramdns/ramdns/internal/upstream"
 )
 
@@ -203,6 +204,13 @@ func main() {
 	resolver := NewResolver()
 	startedAt := time.Now()
 
+	controlStore, err := store.Open(store.DefaultDBPath)
+	if err != nil {
+		log.Printf("control store unavailable: %v", err)
+	} else {
+		defer controlStore.Close()
+	}
+
 	/*
 		Adlist worker.
 	*/
@@ -301,6 +309,7 @@ func main() {
 	controlAPI := api.NewHandler(
 		startedAt,
 		resolver.metrics,
+		controlStore,
 	)
 
 	controlMux.Handle("/api/v1/", controlAPI)

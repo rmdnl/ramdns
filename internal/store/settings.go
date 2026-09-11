@@ -64,3 +64,46 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 
 	return nil
 }
+
+func (s *Store) ListSettings(ctx context.Context) ([]Setting, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT key, value, updated_at
+		 FROM settings
+		 ORDER BY key`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list settings: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Setting
+
+	for rows.Next() {
+		var (
+			setting   Setting
+			updatedAt string
+		)
+
+		if err := rows.Scan(
+			&setting.Key,
+			&setting.Value,
+			&updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan setting: %w", err)
+		}
+
+		setting.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse setting %q timestamp: %w", setting.Key, err)
+		}
+
+		result = append(result, setting)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate settings: %w", err)
+	}
+
+	return result, nil
+}

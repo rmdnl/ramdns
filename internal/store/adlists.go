@@ -67,7 +67,7 @@ func (s *Store) ListAdlists(ctx context.Context) ([]Adlist, error) {
 	}
 	defer rows.Close()
 
-	var result []Adlist
+	result := make([]Adlist, 0)
 
 	for rows.Next() {
 		var (
