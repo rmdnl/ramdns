@@ -12,6 +12,7 @@ import (
 
 	"github.com/ramdns/ramdns/internal/cache"
 	dnsinternal "github.com/ramdns/ramdns/internal/dns"
+	"github.com/ramdns/ramdns/internal/filter"
 	"github.com/ramdns/ramdns/internal/metrics"
 )
 
@@ -26,11 +27,21 @@ type Resolver struct {
 	upstream string
 
 	cache   *cache.Cache
+	filter  *filter.Filter
 	metrics *metrics.Metrics
 	flight  *dnsinternal.SingleFlight
 }
 
 func NewResolver() *Resolver {
+	dnsFilter := filter.New()
+
+	// Temporary local test rules.
+	// These will later be replaced by
+	// dynamically loaded blocklists.
+	dnsFilter.Add("ads.example.com")
+	dnsFilter.Add("tracker.example.com")
+	dnsFilter.Add("telemetry.example.com")
+
 	return &Resolver{
 		client: &dns.Client{
 			Net:     "udp",
@@ -40,6 +51,7 @@ func NewResolver() *Resolver {
 		upstream: upstreamAddr,
 
 		cache:   cache.New(cacheEntries),
+		filter:  dnsFilter,
 		metrics: &metrics.Metrics{},
 		flight:  dnsinternal.NewSingleFlight(),
 	}
@@ -56,6 +68,26 @@ func (r *Resolver) Resolve(
 		msg := new(dns.Msg)
 		msg.SetRcode(req, dns.RcodeFormatError)
 		return msg
+	}
+
+	// --------------------------------
+	// FILTER
+	// --------------------------------
+
+	if len(req.Question) > 0 {
+		qname := req.Question[0].Name
+
+		if r.filter.IsBlocked(qname) {
+			log.Printf(
+				"filter BLOCK: %s",
+				qname,
+			)
+
+			msg := new(dns.Msg)
+			msg.SetRcode(req, dns.RcodeNameError)
+
+			return msg
+		}
 	}
 
 	// --------------------------------
@@ -93,11 +125,8 @@ func (r *Resolver) Resolve(
 
 	result := r.flight.Do(key, func() interface{} {
 
-		// Check cache again.
-		//
-		// Another request may have filled
-		// the cache while we were waiting
-		// to enter the flight.
+		// Re-check cache after entering
+		// the single-flight section.
 
 		if resp, ok := r.cache.Get(key); ok {
 			return resp
