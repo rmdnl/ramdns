@@ -14,14 +14,12 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/ramdns/ramdns/internal/adlist"
-	"github.com/ramdns/ramdns/internal/api"
 	"github.com/ramdns/ramdns/internal/cache"
 	dnsinternal "github.com/ramdns/ramdns/internal/dns"
 	"github.com/ramdns/ramdns/internal/doh"
 	"github.com/ramdns/ramdns/internal/filter"
 	"github.com/ramdns/ramdns/internal/metrics"
 	"github.com/ramdns/ramdns/internal/ratelimit"
-	"github.com/ramdns/ramdns/internal/store"
 	"github.com/ramdns/ramdns/internal/upstream"
 )
 
@@ -202,14 +200,6 @@ func loadTLSConfig() *tls.Config {
 
 func main() {
 	resolver := NewResolver()
-	startedAt := time.Now()
-
-	controlStore, err := store.Open(store.DefaultDBPath)
-	if err != nil {
-		log.Printf("control store unavailable: %v", err)
-	} else {
-		defer controlStore.Close()
-	}
 
 	/*
 		Adlist worker.
@@ -306,13 +296,7 @@ func main() {
 	*/
 	controlMux := http.NewServeMux()
 
-	controlAPI := api.NewHandler(
-		startedAt,
-		resolver.metrics,
-		controlStore,
-	)
 
-	controlMux.Handle("/api/v1/", controlAPI)
 	controlMux.Handle("/metrics", metrics.NewHandler(resolver.metrics))
 
 	controlServer := &http.Server{
