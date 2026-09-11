@@ -1,0 +1,28 @@
+# Build
+/ramdns
+*.out
+
+# Go
+*.test
+coverage.out
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime
+*.log
+logs/
+
+# Local data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
