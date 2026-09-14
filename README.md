@@ -1,6 +1,6 @@
 # RAMDNS 🚀
 
-DNS server sendiri. Cepat, private, bisa ngeblok iklan, dan nggak perlu dashboard admin yang nongkrong terbuka di Internet.
+DNS server milik sendiri, no government involved 🤪. Cepat, private, bisa ngeblok iklan, dan nggak perlu dashboard admin yang nongkrong terbuka di Internet.
 
 RAMDNS adalah recursive DNS resolver berbasis Go yang dibuat untuk VPS kecil dengan fokus pada performa, keamanan, filtering, dan operasional yang sederhana.
 
