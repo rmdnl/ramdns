@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	urlpkg "net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,9 +37,17 @@ func NewDownloader() *Downloader {
 }
 
 func newDownloader(client *http.Client) *Downloader {
+	maxBytes := int64(64 * 1024 * 1024)
+
+	if value := strings.TrimSpace(os.Getenv("RAMDNS_ADLIST_MAX_BYTES")); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
+			maxBytes = parsed
+		}
+	}
+
 	return &Downloader{
 		client:    client,
-		maxBytes:  10 * 1024 * 1024,
+		maxBytes:  maxBytes,
 		userAgent: "RAMDNS-Adlist/1.0",
 	}
 }

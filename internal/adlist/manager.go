@@ -40,8 +40,8 @@ type Manager struct {
 	sources map[string]SourceState
 	cache   map[string]sourceCache
 
-	customRules []filter.Rule
-	adlistRules []filter.Rule
+	customRules     []filter.Rule
+	adlistRuleCount int
 }
 
 func NewManager(f *filter.Filter) *Manager {
@@ -70,14 +70,15 @@ func (m *Manager) LoadOne(content string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.adlistRules = rules
+	m.filter.Replace(rules)
+	m.adlistRuleCount = len(rules)
 
 	// Preserve legacy single-source metadata behavior.
 	m.source.RuleCount = len(rules)
 	m.source.LastSuccess = time.Now()
 	m.source.LastError = ""
 
-	return m.rebuildLocked()
+	return nil
 }
 
 // LoadURL downloads and loads one adlist URL.
@@ -338,7 +339,8 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.adlistRules = allRules
+	m.filter.Replace(allRules)
+	m.adlistRuleCount = len(allRules)
 
 	// Preserve per-source state and cache.
 	for rawURL, state := range newSources {
@@ -379,14 +381,14 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 		}
 	}
 
-	return m.rebuildLocked()
+	return nil
 }
 
 func (m *Manager) RuleCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return len(m.adlistRules)
+	return m.adlistRuleCount
 }
 
 func (m *Manager) Source() SourceState {
@@ -413,17 +415,12 @@ func (m *Manager) rebuild() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.rebuildLocked()
+	return nil
 }
 
 func (m *Manager) rebuildLocked() error {
-	rules := make([]filter.Rule, 0, len(m.customRules)+len(m.adlistRules))
-
-	rules = append(rules, m.customRules...)
-	rules = append(rules, m.adlistRules...)
-
-	m.filter.Replace(rules)
-
+	// Adlist snapshots are published directly by LoadOne/LoadURLs.
+	// Keep this hook for future custom-rule overlays.
 	return nil
 }
 
