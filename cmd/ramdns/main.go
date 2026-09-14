@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -36,6 +37,27 @@ const (
 	tlsCertFile = "/etc/ramdns/tls/fullchain.pem"
 	tlsKeyFile  = "/etc/ramdns/tls/privkey.pem"
 )
+
+func publicHTTPHandler(dohHandler, dashboardHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+
+		if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+			host = parsedHost
+		}
+
+		host = strings.ToLower(strings.TrimSuffix(host, "."))
+
+		switch host {
+		case "doh.ramdns.my.id":
+			dohHandler.ServeHTTP(w, r)
+		case "dashboard.ramdns.my.id":
+			dashboardHandler.ServeHTTP(w, r)
+		default:
+			http.Error(w, "misdirected request", http.StatusMisdirectedRequest)
+		}
+	})
+}
 
 type Resolver struct {
 	upstream *upstream.Resolver
@@ -318,9 +340,16 @@ func main() {
 	/*
 		DoH :443
 	*/
+	dohHandler := doh.NewHandler(resolver)
+	dashboardHandler := dashboard.NewHandler(
+		"http://127.0.0.1:8502",
+		managementToken,
+		dashboard.StaticDir(),
+	)
+
 	dohServer := &http.Server{
 		Addr:    dohListen,
-		Handler: doh.NewHandler(resolver),
+		Handler: publicHTTPHandler(dohHandler, dashboardHandler),
 
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
