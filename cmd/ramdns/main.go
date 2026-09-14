@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +20,7 @@ import (
 	dnsinternal "github.com/ramdns/ramdns/internal/dns"
 	"github.com/ramdns/ramdns/internal/doh"
 	"github.com/ramdns/ramdns/internal/filter"
+	"github.com/ramdns/ramdns/internal/management"
 	"github.com/ramdns/ramdns/internal/metrics"
 	"github.com/ramdns/ramdns/internal/ratelimit"
 	"github.com/ramdns/ramdns/internal/upstream"
@@ -241,6 +244,24 @@ func main() {
 		publicDNSLimiter,
 	)
 
+	managementToken := strings.TrimSpace(os.Getenv("RAMDNS_MANAGEMENT_TOKEN"))
+	if managementToken == "" {
+		var b [32]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			log.Fatalf("failed to generate management token: %v", err)
+		}
+		managementToken = hex.EncodeToString(b[:])
+		log.Printf("generated ephemeral management token; set RAMDNS_MANAGEMENT_TOKEN for persistent access")
+	}
+
+	managementServer := &http.Server{
+		Addr:              "127.0.0.1:8502",
+		Handler:           management.NewHandler(resolver.metrics, resolver.upstream, managementToken),
+		ReadHeaderTimeout: 2 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       10 * time.Second,
+	}
+
 	metricsServer := &http.Server{
 		Addr:              "127.0.0.1:8080",
 		Handler:           metrics.NewHandler(resolver.metrics, resolver.upstream),
@@ -299,6 +320,13 @@ func main() {
 	/*
 		Start internal metrics.
 	*/
+	go func() {
+		log.Printf("starting private management API on 127.0.0.1:8502")
+		if err := managementServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("management server failed: %v", err)
+		}
+	}()
+
 	go func() {
 		log.Printf("starting internal metrics server on 127.0.0.1:8080")
 		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -375,6 +403,10 @@ func main() {
 		10*time.Second,
 	)
 	defer cancel()
+
+	if err := managementServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("management shutdown error: %v", err)
+	}
 
 	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("metrics shutdown error: %v", err)
