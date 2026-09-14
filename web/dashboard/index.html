@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RAMDNS Dashboard</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#0b0f14;color:#e6edf3;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .wrap{max-width:1100px;margin:auto;padding:32px 20px}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}
+    h1{margin:0;font-size:28px}
+    .sub{color:#8b949e;font-size:13px;margin-top:5px}
+    .pill{padding:7px 12px;border:1px solid #30363d;border-radius:999px;font-size:13px}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+    .card{background:#11161d;border:1px solid #252c35;border-radius:14px;padding:18px}
+    .label{color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+    .value{font-size:27px;font-weight:700;margin-top:8px}
+    .section{margin-top:24px}
+    .section h2{font-size:17px;margin:0 0 12px}
+    table{width:100%;border-collapse:collapse;background:#11161d;border:1px solid #252c35;border-radius:14px;overflow:hidden}
+    th,td{text-align:left;padding:13px;border-bottom:1px solid #252c35;font-size:13px}
+    th{color:#8b949e;font-weight:600}
+    tr:last-child td{border-bottom:0}
+    .ok{color:#3fb950}.bad{color:#f85149}
+    .muted{color:#8b949e}
+    @media(max-width:800px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:500px){.grid{grid-template-columns:1fr}.wrap{padding:20px 14px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>RAMDNS</h1>
+      <div class="sub">Public DNS Resolver · Management Dashboard</div>
+    </div>
+    <div id="status" class="pill">Connecting...</div>
+  </header>
+
+  <div class="grid">
+    <div class="card"><div class="label">Total Queries</div><div id="queries" class="value">-</div></div>
+    <div class="card"><div class="label">Cache Hits</div><div id="hits" class="value">-</div></div>
+    <div class="card"><div class="label">Cache Hit Ratio</div><div id="ratio" class="value">-</div></div>
+    <div class="card"><div class="label">Upstream Errors</div><div id="errors" class="value">-</div></div>
+  </div>
+
+  <div class="section">
+    <h2>Upstream Health</h2>
+    <table>
+      <thead><tr><th>Server</th><th>Status</th><th>Queries</th><th>Success</th><th>Failures</th><th>Latency</th></tr></thead>
+      <tbody id="upstreams"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const token = sessionStorage.getItem("ramdns_token") || prompt("Management token");
+if (token) sessionStorage.setItem("ramdns_token", token);
+
+async function api(path){
+  const r = await fetch("/api/v1/" + path, {
+    headers: {Authorization: "Bearer " + token}
+  });
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function fmt(n){return Number(n || 0).toLocaleString()}
+function latency(ns){
+  if(!ns) return "-";
+  return (Number(ns)/1e6).toFixed(2) + " ms";
+}
+
+async function refresh(){
+  try{
+    const [status, metrics, upstreams] = await Promise.all([
+      api("status"), api("metrics"), api("upstreams")
+    ]);
+
+    document.getElementById("status").textContent =
+      status.status === "ok" ? "● Online" : "● Offline";
+    document.getElementById("status").className =
+      "pill " + (status.status === "ok" ? "ok" : "bad");
+
+    document.getElementById("queries").textContent = fmt(metrics.total_queries);
+    document.getElementById("hits").textContent = fmt(metrics.cache_hits);
+    document.getElementById("ratio").textContent =
+      ((metrics.cache_hit_ratio || 0) * 100).toFixed(1) + "%";
+    document.getElementById("errors").textContent = fmt(metrics.upstream_errors);
+
+    const rows = Object.entries(upstreams).map(([name,u]) => `
+      <tr>
+        <td>${name}</td>
+        <td class="${u.healthy ? "ok":"bad"}">${u.healthy ? "● Healthy":"● Down"}</td>
+        <td>${fmt(u.queries)}</td>
+        <td>${fmt(u.successes)}</td>
+        <td>${fmt(u.failures)}</td>
+        <td>${latency(u.latency_ns)}</td>
+      </tr>`).join("");
+
+    document.getElementById("upstreams").innerHTML =
+      rows || '<tr><td colspan="6" class="muted">No upstream data</td></tr>';
+  }catch(e){
+    document.getElementById("status").textContent = "● Error";
+    document.getElementById("status").className = "pill bad";
+    console.error(e);
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

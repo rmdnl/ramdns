@@ -17,6 +17,7 @@ import (
 
 	"github.com/ramdns/ramdns/internal/adlist"
 	"github.com/ramdns/ramdns/internal/cache"
+	"github.com/ramdns/ramdns/internal/dashboard"
 	dnsinternal "github.com/ramdns/ramdns/internal/dns"
 	"github.com/ramdns/ramdns/internal/doh"
 	"github.com/ramdns/ramdns/internal/filter"
@@ -262,6 +263,18 @@ func main() {
 		IdleTimeout:       10 * time.Second,
 	}
 
+	dashboardServer := &http.Server{
+		Addr: "127.0.0.1:8503",
+		Handler: dashboard.NewHandler(
+			"http://127.0.0.1:8502",
+			managementToken,
+			dashboard.StaticDir(),
+		),
+		ReadHeaderTimeout: 2 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       10 * time.Second,
+	}
+
 	metricsServer := &http.Server{
 		Addr:              "127.0.0.1:8080",
 		Handler:           metrics.NewHandler(resolver.metrics, resolver.upstream),
@@ -324,6 +337,13 @@ func main() {
 		log.Printf("starting private management API on 127.0.0.1:8502")
 		if err := managementServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("management server failed: %v", err)
+		}
+	}()
+
+	go func() {
+		log.Printf("starting private dashboard on 127.0.0.1:8503")
+		if err := dashboardServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("dashboard server failed: %v", err)
 		}
 	}()
 
@@ -406,6 +426,10 @@ func main() {
 
 	if err := managementServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("management shutdown error: %v", err)
+	}
+
+	if err := dashboardServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("dashboard shutdown error: %v", err)
 	}
 
 	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
