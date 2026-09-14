@@ -36,8 +36,8 @@ Tidak ada public admin API. Tidak ada port management yang perlu dibuka ke Inter
 | Automatic TLS renewal | 🟢 |
 | systemd hardening | 🟢 |
 | Public control API | 🔴 Sengaja tidak ada |
-| Health-aware upstream routing | 🚧 |
-| Prometheus / observability | 🚧 |
+| Health-aware upstream routing | 🟢 |
+| Local resolver metrics | 🟢 |
 | Private management API | 🚧 |
 | Web dashboard | 🚧 |
 
@@ -676,6 +676,72 @@ Query ───────────┤
 ```
 
 Tujuannya mengurangi tail latency ketika salah satu upstream lambat.
+
+---
+
+# 📊 Local Metrics
+
+RAMDNS menyediakan endpoint metrics internal untuk observability lokal:
+
+```text
+http://127.0.0.1:8080/metrics
+```
+
+Endpoint ini sengaja hanya bind ke loopback dan tidak dibuka melalui firewall.
+Tidak ada public metrics API.
+
+Contoh response:
+
+```json
+{
+  "cache_hits": 1,
+  "cache_misses": 5,
+  "upstream_queries": 5,
+  "upstream_errors": 0,
+  "total_queries": 6,
+  "cache_hit_ratio": 0.16666666666666666,
+  "upstreams": {
+    "1.1.1.1:853|cloudflare-dns.com": {
+      "healthy": true,
+      "queries": 5,
+      "successes": 5,
+      "failures": 0
+    }
+  }
+}
+```
+
+Metrics mencakup:
+
+- cache hits dan misses
+- total query
+- upstream queries dan errors
+- cache hit ratio
+- health dan statistik setiap upstream
+
+Test dari VPS:
+
+```bash
+curl -fsS http://127.0.0.1:8080/metrics
+```
+
+Port `8080` tidak perlu dibuka di UFW.
+
+---
+
+# 🩺 Health-aware Upstream
+
+RAMDNS memonitor kesehatan upstream DoT secara periodik dan hanya merutekan query ke upstream yang sehat jika tersedia.
+
+```text
+                 ┌── Cloudflare ── healthy ──┐
+Query ───────────┤                            ├── first successful response
+                 └── Google ────── healthy ──┘
+```
+
+Health checker melakukan probe berkala. Upstream ditandai unhealthy setelah beberapa kegagalan berturut-turut dan kembali healthy setelah probe berhasil secara berturut-turut.
+
+Jika seluruh upstream sedang unhealthy, RAMDNS tetap mencoba seluruh upstream sebagai fallback agar kegagalan health probe tidak otomatis memutus resolusi DNS.
 
 ---
 
