@@ -1,6 +1,8 @@
 package adlist
 
 import (
+	"strings"
+
 	"github.com/ramdns/ramdns/internal/filter"
 )
 
@@ -14,40 +16,65 @@ func NewCompiler() *Compiler {
 	}
 }
 
+// Compile parses and deduplicates one or more adlists.
+//
+// Deduplication happens while compiling so callers receive a compact
+// rule set without retaining duplicate rules from the source lists.
 func (c *Compiler) Compile(lists []string) []filter.Rule {
-	allRules := make([]filter.Rule, 0)
-
-	for _, input := range lists {
-		rules := c.parser.Parse(input)
-		allRules = append(allRules, rules...)
+	if len(lists) == 0 {
+		return nil
 	}
 
-	return c.CompileRules(allRules)
-}
-
-func (c *Compiler) CompileRules(
-	rules []filter.Rule,
-) []filter.Rule {
 	unique := make(map[string]filter.Rule)
 
-	for _, rule := range rules {
-		key := rule.Domain
+	for _, input := range lists {
+		c.parser.parseReader(strings.NewReader(input), func(rule filter.Rule) {
+			if rule.Domain == "" {
+				return
+			}
 
-		if key == "" {
+			existing, exists := unique[rule.Domain]
+			if exists && existing.Type == filter.RuleDomain {
+				return
+			}
+
+			unique[rule.Domain] = rule
+		})
+	}
+
+	return rulesFromMap(unique)
+}
+
+// CompileRules deduplicates an already parsed rule set.
+func (c *Compiler) CompileRules(rules []filter.Rule) []filter.Rule {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	unique := make(map[string]filter.Rule, len(rules))
+
+	for _, rule := range rules {
+		if rule.Domain == "" {
 			continue
 		}
 
-		if existing, ok := unique[key]; ok {
-			if existing.Type == filter.RuleDomain {
-				continue
-			}
+		existing, exists := unique[rule.Domain]
+		if exists && existing.Type == filter.RuleDomain {
+			continue
 		}
 
-		unique[key] = rule
+		unique[rule.Domain] = rule
+	}
+
+	return rulesFromMap(unique)
+}
+
+func rulesFromMap(unique map[string]filter.Rule) []filter.Rule {
+	if len(unique) == 0 {
+		return nil
 	}
 
 	result := make([]filter.Rule, 0, len(unique))
-
 	for _, rule := range unique {
 		result = append(result, rule)
 	}

@@ -107,6 +107,7 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 		body         string
 		etag         string
 		lastModified string
+		rules        []filter.Rule
 		notModified  bool
 		err          error
 	}
@@ -116,17 +117,15 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 	var wg sync.WaitGroup
 	wg.Add(len(cleanURLs))
 
-	for _, url := range cleanURLs {
-		url := url
+	for _, rawURL := range cleanURLs {
+		rawURL := rawURL
 
 		go func() {
 			defer wg.Done()
 
 			m.mu.RLock()
-
-			cached, hasCache := m.cache[url]
+			cached, hasCache := m.cache[rawURL]
 			legacy := m.source
-
 			m.mu.RUnlock()
 
 			var etag string
@@ -148,7 +147,7 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 
 			download, err := m.downloader.Download(
 				ctx,
-				url,
+				rawURL,
 				etag,
 				lastModified,
 			)
@@ -156,21 +155,33 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 			if err != nil {
 				if errors.Is(err, ErrNotModified) {
 					if hasCache && strings.TrimSpace(cached.body) != "" {
+						rules := m.compiler.Compile([]string{cached.body})
+						if len(rules) == 0 {
+							results <- result{
+								url: rawURL,
+								err: fmt.Errorf(
+									"cached adlist %s produced no valid rules",
+									rawURL,
+								),
+							}
+							return
+						}
+
 						results <- result{
-							url:          url,
+							url:          rawURL,
 							body:         cached.body,
 							etag:         cached.state.ETag,
 							lastModified: cached.state.LastModified,
+							rules:        rules,
 							notModified:  true,
 						}
 						return
 					}
 
-					// If there is no body cache, the existing active
-					// snapshot can remain active. Returning ErrNotModified
-					// preserves the original manager behavior.
+					// If there is no cached body, keep the currently active
+					// snapshot untouched.
 					results <- result{
-						url:         url,
+						url:         rawURL,
 						notModified: true,
 						err:         ErrNotModified,
 					}
@@ -178,17 +189,30 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 				}
 
 				results <- result{
-					url: url,
+					url: rawURL,
 					err: fmt.Errorf("download adlist: %w", err),
 				}
 				return
 			}
 
+			rules := m.compiler.Compile([]string{download.Body})
+			if len(rules) == 0 {
+				results <- result{
+					url: rawURL,
+					err: fmt.Errorf(
+						"adlist %s produced no valid rules",
+						rawURL,
+					),
+				}
+				return
+			}
+
 			results <- result{
-				url:          url,
+				url:          rawURL,
 				body:         download.Body,
 				etag:         download.ETag,
 				lastModified: download.LastModified,
+				rules:        rules,
 			}
 		}()
 	}
@@ -198,16 +222,17 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 
 	bodies := make(map[string]string, len(cleanURLs))
 	newSources := make(map[string]SourceState, len(cleanURLs))
+	compiled := make(map[string][]filter.Rule, len(cleanURLs))
 
 	for res := range results {
 		if res.err != nil {
 			if errors.Is(res.err, ErrNotModified) {
-				// A 304 means the currently active snapshot is still valid.
+				// A 304 without a cached body means the active snapshot
+				// remains valid. Preserve existing behavior.
 				continue
 			}
 
 			m.mu.Lock()
-
 			m.source.LastError = res.err.Error()
 
 			if old, ok := m.sources[res.url]; ok {
@@ -221,8 +246,7 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 			return res.err
 		}
 
-		rules := m.compiler.Compile([]string{res.body})
-		if len(rules) == 0 {
+		if len(res.rules) == 0 {
 			err := fmt.Errorf(
 				"adlist %s produced no valid rules",
 				res.url,
@@ -241,7 +265,7 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 			URL:          res.url,
 			ETag:         res.etag,
 			LastModified: res.lastModified,
-			RuleCount:    len(rules),
+			RuleCount:    len(res.rules),
 			LastSuccess:  now,
 		}
 
@@ -263,10 +287,11 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 		}
 
 		bodies[res.url] = res.body
+		compiled[res.url] = res.rules
 		newSources[res.url] = state
 	}
 
-	// If every source returned 304 and there is no new body,
+	// If every source returned 304 without a cached body,
 	// leave the current active snapshot untouched.
 	if len(bodies) == 0 {
 		return ErrNotModified
@@ -274,24 +299,37 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 
 	var allRules []filter.Rule
 
-	for _, url := range cleanURLs {
-		body, ok := bodies[url]
+	for _, rawURL := range cleanURLs {
+		rules, ok := compiled[rawURL]
+
 		if !ok {
-			// Source was 304. Reuse cached body if available.
+			// This should only happen for a 304 response whose cached body
+			// was unavailable. Preserve the defensive behavior.
 			m.mu.RLock()
-			cached, cachedOK := m.cache[url]
+			cached, cachedOK := m.cache[rawURL]
 			m.mu.RUnlock()
 
 			if !cachedOK || strings.TrimSpace(cached.body) == "" {
-				return fmt.Errorf("no cached body for unchanged adlist %s", url)
+				return fmt.Errorf(
+					"no cached body for unchanged adlist %s",
+					rawURL,
+				)
 			}
 
-			body = cached.body
+			// Defensive fallback. Normally cached 304 responses are already
+			// compiled above.
+			rules = m.compiler.Compile([]string{cached.body})
 		}
 
-		rules := m.compiler.Compile([]string{body})
 		allRules = append(allRules, rules...)
 	}
+
+	if len(allRules) == 0 {
+		return ErrNoRules
+	}
+
+	// Dedupe across all sources once.
+	allRules = m.compiler.CompileRules(allRules)
 
 	if len(allRules) == 0 {
 		return ErrNoRules
@@ -302,12 +340,12 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 
 	m.adlistRules = allRules
 
-	// Preserve per-source state.
-	for url, state := range newSources {
-		m.sources[url] = state
+	// Preserve per-source state and cache.
+	for rawURL, state := range newSources {
+		m.sources[rawURL] = state
 
-		if body, ok := bodies[url]; ok {
-			m.cache[url] = sourceCache{
+		if body, ok := bodies[rawURL]; ok {
+			m.cache[rawURL] = sourceCache{
 				state: state,
 				body:  body,
 			}
@@ -322,6 +360,7 @@ func (m *Manager) loadURLs(ctx context.Context, urls []string) error {
 		if state.ETag == "" {
 			state.ETag = m.source.ETag
 		}
+
 		if state.LastModified == "" {
 			state.LastModified = m.source.LastModified
 		}

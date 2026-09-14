@@ -1,94 +1,128 @@
 package adlist
 
-import "testing"
+import (
+	"reflect"
+	"testing"
 
-func TestParseMixedFormats(t *testing.T) {
+	"github.com/ramdns/ramdns/internal/filter"
+)
+
+func TestParserFormats(t *testing.T) {
 	input := `
+! comment
 # comment
-! another comment
+; comment
+[Adblock Plus 2.0]
 
-0.0.0.0 ads.example.com
-127.0.0.1 tracker.example.com
-||telemetry.example.com^
-plain.example.com
+||ads.example.com^
+||tracker.example.net^$script,image,third-party
+||*.wild.example.org^
+
+0.0.0.0 hosts.example.com
+127.0.0.1 localhost.example.net
+:: ipv6.example.org
+::1 ipv6loop.example.org
+
+address=/dnsmasq.example.com/0.0.0.0
+
+https://url.example.com/path/banner.js
+http://tracker.example.net/foo
+
+plain.example.org
+*.wildcard.example.com
+plain.example.org.
+
+@@||allowed.example.com^
+server=/not-a-block.example/1.1.1.1
+
+192.168.1.1
+invalid
+bad domain.example.com
+https://
 `
 
-	parser := NewParser()
-	rules := parser.Parse(input)
+	got := NewParser().Parse(input)
 
-	if len(rules) != 4 {
-		t.Fatalf(
-			"expected 4 rules, got %d",
-			len(rules),
-		)
+	want := []filter.Rule{
+		{Domain: "ads.example.com", Type: filter.RuleDomain},
+		{Domain: "tracker.example.net", Type: filter.RuleDomain},
+		{Domain: "wild.example.org", Type: filter.RuleDomain},
+		{Domain: "hosts.example.com", Type: filter.RuleDomain},
+		{Domain: "localhost.example.net", Type: filter.RuleDomain},
+		{Domain: "ipv6.example.org", Type: filter.RuleDomain},
+		{Domain: "ipv6loop.example.org", Type: filter.RuleDomain},
+		{Domain: "dnsmasq.example.com", Type: filter.RuleDomain},
+
+		{Domain: "plain.example.org", Type: filter.RuleDomain},
+		{Domain: "wildcard.example.com", Type: filter.RuleDomain},
+		{Domain: "plain.example.org", Type: filter.RuleDomain},
 	}
 
-	expected := []string{
-		"ads.example.com",
-		"tracker.example.com",
-		"telemetry.example.com",
-		"plain.example.com",
-	}
-
-	for i, rule := range rules {
-		if rule.Domain != expected[i] {
-			t.Fatalf(
-				"rule %d expected %q got %q",
-				i,
-				expected[i],
-				rule.Domain,
-			)
-		}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected rules:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 
-func TestParseIgnoresInvalidLines(t *testing.T) {
+func TestParserRejectsExceptionsAndInvalidInput(t *testing.T) {
 	input := `
-# comment
-not a domain
-http://example.com/list
-localhost
+@@||allowed.example.com^
+192.168.1.1
 127.0.0.1
+invalid
+-evil.example.com
+evil-.example.com
+foo..example.com
+https://
 `
 
-	parser := NewParser()
-	rules := parser.Parse(input)
+	got := NewParser().Parse(input)
 
-	if len(rules) != 0 {
-		t.Fatalf(
-			"expected 0 rules, got %d",
-			len(rules),
-		)
+	if len(got) != 0 {
+		t.Fatalf("expected no rules, got %#v", got)
 	}
 }
 
-func TestParseNormalizesDomains(t *testing.T) {
+func TestParserLargeLineDoesNotCrash(t *testing.T) {
+	line := make([]byte, maxLineSize+1)
+	for i := range line {
+		line[i] = 'a'
+	}
+
+	got := NewParser().Parse(string(line))
+	if len(got) != 0 {
+		t.Fatalf("expected oversized line to be ignored")
+	}
+}
+
+func TestParserIgnoresSourceURLs(t *testing.T) {
 	input := `
-ADS.Example.COM.
-||TRACKER.Example.COM^
+http://example.com/list
+https://example.org/hosts.txt
+ftp://example.net/blocklist
 `
 
+	rules := NewParser().Parse(input)
+	if len(rules) != 0 {
+		t.Fatalf("expected source URLs to be ignored, got %d rules", len(rules))
+	}
+}
+
+func BenchmarkParser10K(b *testing.B) {
+	input := makeBenchmarkAdlist(10_000)
 	parser := NewParser()
-	rules := parser.Parse(input)
 
-	if len(rules) != 2 {
-		t.Fatalf(
-			"expected 2 rules, got %d",
-			len(rules),
-		)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = parser.Parse(input)
 	}
+}
 
-	if rules[0].Domain != "ads.example.com" {
-		t.Fatalf(
-			"unexpected domain: %s",
-			rules[0].Domain,
-		)
-	}
+func BenchmarkParser100K(b *testing.B) {
+	input := makeBenchmarkAdlist(100_000)
+	parser := NewParser()
 
-	if rules[1].Domain != "tracker.example.com" {
-		t.Fatalf(
-			"unexpected domain: %s",
-			rules[1].Domain,
-		)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = parser.Parse(input)
 	}
 }

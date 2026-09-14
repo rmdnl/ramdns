@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -150,4 +151,40 @@ func TestFilterConcurrentLookup(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func BenchmarkReplace100K(b *testing.B) {
+	rules := make([]Rule, 100_000)
+	for i := range rules {
+		rules[i] = Rule{
+			Domain: fmt.Sprintf("ads%d.example.com", i),
+			Type:   RuleDomain,
+		}
+	}
+
+	f := New()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		f.Replace(rules)
+	}
+}
+
+func BenchmarkIsBlocked100K(b *testing.B) {
+	rules := make([]Rule, 100_000)
+	for i := range rules {
+		rules[i] = Rule{
+			Domain: fmt.Sprintf("ads%d.example.com", i),
+			Type:   RuleDomain,
+		}
+	}
+
+	f := New()
+	f.Replace(rules)
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = f.IsBlocked("sub.ads99999.example.com")
+	}
 }

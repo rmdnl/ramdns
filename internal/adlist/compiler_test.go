@@ -1,6 +1,8 @@
 package adlist
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ramdns/ramdns/internal/filter"
@@ -93,4 +95,37 @@ tracker.three.com
 			len(rules),
 		)
 	}
+}
+
+func BenchmarkCompiler10K(b *testing.B) {
+	input := makeBenchmarkAdlist(10_000)
+
+	compiler := NewCompiler()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = compiler.Compile([]string{input})
+	}
+}
+
+func BenchmarkCompiler100K(b *testing.B) {
+	input := makeBenchmarkAdlist(100_000)
+
+	compiler := NewCompiler()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = compiler.Compile([]string{input})
+	}
+}
+
+func makeBenchmarkAdlist(n int) string {
+	var buf strings.Builder
+	buf.Grow(n * 32)
+
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&buf, "||ads%d.example.com^\n", i)
+	}
+
+	return buf.String()
 }
