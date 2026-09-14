@@ -3,10 +3,17 @@ package metrics
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/ramdns/ramdns/internal/upstream"
 )
 
+type HealthProvider interface {
+	Health() map[string]upstream.ServerHealth
+}
+
 type Handler struct {
-	metrics *Metrics
+	metrics  *Metrics
+	upstream HealthProvider
 }
 
 type Response struct {
@@ -18,10 +25,16 @@ type Response struct {
 	CacheHitRatio float64 `json:"cache_hit_ratio"`
 }
 
-func NewHandler(m *Metrics) *Handler {
-	return &Handler{
+func NewHandler(m *Metrics, providers ...HealthProvider) *Handler {
+	h := &Handler{
 		metrics: m,
 	}
+
+	if len(providers) > 0 {
+		h.upstream = providers[0]
+	}
+
+	return h
 }
 
 func (h *Handler) ServeHTTP(

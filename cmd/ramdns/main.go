@@ -241,6 +241,14 @@ func main() {
 		publicDNSLimiter,
 	)
 
+	metricsServer := &http.Server{
+		Addr:              "127.0.0.1:8080",
+		Handler:           metrics.NewHandler(resolver.metrics, resolver.upstream),
+		ReadHeaderTimeout: 2 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       10 * time.Second,
+	}
+
 	/*
 		Normal DNS handler for encrypted transports.
 	*/
@@ -287,6 +295,16 @@ func main() {
 		MaxHeaderBytes:    16 * 1024,
 		TLSConfig:         tlsConfig,
 	}
+
+	/*
+		Start internal metrics.
+	*/
+	go func() {
+		log.Printf("starting internal metrics server on 127.0.0.1:8080")
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("metrics server failed: %v", err)
+		}
+	}()
 
 	/*
 		Start DNS UDP.
@@ -357,6 +375,10 @@ func main() {
 		10*time.Second,
 	)
 	defer cancel()
+
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("metrics shutdown error: %v", err)
+	}
 
 	if err := dohServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("DoH shutdown error: %v", err)
