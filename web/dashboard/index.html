@@ -55,12 +55,10 @@
 </div>
 
 <script>
-const token = sessionStorage.getItem("ramdns_token") || prompt("Management token");
-if (token) sessionStorage.setItem("ramdns_token", token);
 
 async function api(path){
   const r = await fetch("/api/v1/" + path, {
-    headers: {Authorization: "Bearer " + token}
+    headers: {"Accept": "application/json"}
   });
   if(!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
