@@ -1,0 +1,26 @@
+[Unit]
+Description=RAMDNS Personal DNS Resolver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User=ubuntu
+Group=ubuntu
+
+WorkingDirectory=/opt/ramdns
+ExecStart=/opt/ramdns/ramdns
+
+Restart=always
+RestartSec=2
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

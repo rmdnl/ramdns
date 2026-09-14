@@ -30,3 +30,9 @@ Thumbs.db
 # Local backups
 *.bak
 *.bak-*
+
+# TLS / Certbot runtime secrets
+deploy/certbot/*.ini
+/etc/letsencrypt/
+*.pem
+*.key
